@@ -1,0 +1,59 @@
+#cloud-config
+# Hetzner Cloud server bootstrap for a Vexa dev/test host (Ubuntu 24.04).
+# Paste this whole file into "Cloud config" when creating the server, AFTER replacing:
+#   1. the ssh-ed25519 line below with YOUR public key (cat ~/.ssh/vexa_hetzner.pub)
+#   2. the repo URL in runcmd if you deploy from a different fork
+# Result: user `dev` (SSH key only, passwordless sudo, docker group), Docker engine, Node 22 +
+# pnpm, uv, 4 GB swap, SSH password + root login disabled, the repo cloned at /home/dev/vexa.
+# Progress: `cloud-init status --wait` on the server; log in /var/log/cloud-init-output.log.
+
+users:
+  - name: dev
+    shell: /bin/bash
+    groups: [sudo]
+    sudo: "ALL=(ALL) NOPASSWD:ALL"
+    lock_passwd: true
+    ssh_authorized_keys:
+      - ssh-ed25519 AAAA_REPLACE_WITH_YOUR_PUBLIC_KEY vexa-hetzner
+
+package_update: true
+package_upgrade: true
+packages:
+  - make
+  - git
+  - curl
+  - ca-certificates
+  - jq
+  - openssl
+  - htop
+  - fail2ban
+  - unattended-upgrades
+
+swap:
+  filename: /swapfile
+  size: 4G
+  maxsize: 4G
+
+write_files:
+  - path: /etc/ssh/sshd_config.d/60-vexa-hardening.conf
+    content: |
+      PasswordAuthentication no
+      KbdInteractiveAuthentication no
+      PermitRootLogin no
+  # Cap container logs so a chatty bot can't fill the disk.
+  - path: /etc/docker/daemon.json
+    content: |
+      {
+        "log-driver": "json-file",
+        "log-opts": { "max-size": "20m", "max-file": "3" }
+      }
+
+runcmd:
+  - [sh, -c, "curl -fsSL https://get.docker.com | sh"]
+  - [usermod, -aG, docker, dev]
+  - [sh, -c, "curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && apt-get install -y nodejs && corepack enable"]
+  - [sh, -c, "curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin UV_NO_MODIFY_PATH=1 sh"]
+  - [sudo, -u, dev, git, clone, "https://github.com/yrabin/vexa.git", /home/dev/vexa]
+  - [systemctl, restart, ssh]
+
+final_message: "vexa host ready after $UPTIME s — log in as dev@<ip>"
